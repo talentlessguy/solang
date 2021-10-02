@@ -2,7 +2,6 @@ mod solana_helpers;
 
 use base58::{FromBase58, ToBase58};
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
-use ed25519_dalek::{ed25519::signature::Signature, Verifier};
 use ethabi::{RawLog, Token};
 use libc::c_char;
 use rand::Rng;
@@ -643,70 +642,6 @@ impl From<Ed25519SigCheckError> for u64 {
     }
 }
 
-const SUCCESS: u64 = 0;
-struct SyscallEd25519SigCheck();
-
-impl<'a> SyscallObject<UserError> for SyscallEd25519SigCheck {
-    fn call(
-        &mut self,
-        message_addr: u64,
-        message_len: u64,
-        signature_addr: u64,
-        publickey_addr: u64,
-        _arg5: u64,
-        memory_mapping: &MemoryMapping,
-        result: &mut Result<u64, EbpfError<UserError>>,
-    ) {
-        let message = question_mark!(
-            translate_slice::<u8>(memory_mapping, message_addr, message_len,),
-            result
-        );
-
-        let signature = question_mark!(
-            translate_slice::<u8>(
-                memory_mapping,
-                signature_addr,
-                ed25519_dalek::SIGNATURE_LENGTH as u64,
-            ),
-            result
-        );
-
-        let signature = match ed25519_dalek::Signature::from_bytes(signature) {
-            Ok(sig) => sig,
-            Err(_) => {
-                *result = Ok(Ed25519SigCheckError::InvalidSignature.into());
-                return;
-            }
-        };
-
-        let publickey = question_mark!(
-            translate_slice::<u8>(
-                memory_mapping,
-                publickey_addr,
-                ed25519_dalek::PUBLIC_KEY_LENGTH as u64,
-            ),
-            result
-        );
-
-        let publickey = match ed25519_dalek::PublicKey::from_bytes(publickey) {
-            Ok(pubkey) => pubkey,
-            Err(_) => {
-                *result = Ok(Ed25519SigCheckError::InvalidPublicKey.into());
-                return;
-            }
-        };
-
-        match publickey.verify(message, &signature) {
-            Ok(_) => {
-                *result = Ok(SUCCESS);
-            }
-            Err(_) => {
-                *result = Ok(Ed25519SigCheckError::VerifyFailed.into());
-            }
-        }
-    }
-}
-
 // Shamelessly stolen from solana source
 
 /// Dynamic memory allocation syscall called when the BPF program calls
@@ -1211,10 +1146,6 @@ impl VirtualMachine {
             .unwrap();
 
         syscall_registry
-            .register_syscall_by_name(b"sol_ed25519_sig_check", SyscallEd25519SigCheck::call)
-            .unwrap();
-
-        syscall_registry
             .register_syscall_by_name(b"sol_set_return_data", SyscallSetReturnData::call)
             .unwrap();
 
@@ -1322,12 +1253,12 @@ impl VirtualMachine {
         assert_eq!(res, 0);
     }
 
-    fn constructor(&mut self, name: &str, args: &[Token]) {
+    fn constructor(&mut self, name: &str, args: &[Token], value: u64) {
         let program = &self.stack[0];
 
         println!("constructor for {}", hex::encode(&program.data));
 
-        let mut calldata = VirtualMachine::input(&program.data, &account_new(), name, &[]);
+        let mut calldata = VirtualMachine::input(&program.data, &account_new(), value, name, &[]);
 
         if let Some(constructor) = &program.abi.as_ref().unwrap().constructor {
             calldata.extend(&constructor.encode_input(vec![], args).unwrap());
@@ -1341,12 +1272,13 @@ impl VirtualMachine {
         name: &str,
         args: &[Token],
         seeds: &[&(Account, Vec<u8>)],
+        value: u64,
     ) -> Vec<Token> {
         let program = &self.stack[0];
 
         println!("function for {}", hex::encode(&program.data));
 
-        let mut calldata = VirtualMachine::input(&program.data, &account_new(), name, seeds);
+        let mut calldata = VirtualMachine::input(&program.data, &account_new(), value, name, seeds);
 
         println!("input: {} seeds {:?}", hex::encode(&calldata), seeds);
 
@@ -1375,11 +1307,13 @@ impl VirtualMachine {
     fn input(
         recv: &Account,
         sender: &Account,
+        value: u64,
         name: &str,
         seeds: &[&(Account, Vec<u8>)],
     ) -> Vec<u8> {
         let mut calldata: Vec<u8> = recv.to_vec();
         calldata.extend_from_slice(sender);
+        calldata.extend_from_slice(&value.to_le_bytes());
 
         let mut hasher = Keccak::v256();
         let mut hash = [0u8; 32];

@@ -15,9 +15,9 @@ fn conditional_destructure() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    let returns = vm.function("f", &[Token::Bool(true), Token::Bool(true)], &[]);
+    let returns = vm.function("f", &[Token::Bool(true), Token::Bool(true)], &[], 0);
 
     assert_eq!(
         returns,
@@ -27,7 +27,7 @@ fn conditional_destructure() {
         ]
     );
 
-    let returns = vm.function("f", &[Token::Bool(true), Token::Bool(false)], &[]);
+    let returns = vm.function("f", &[Token::Bool(true), Token::Bool(false)], &[], 0);
 
     assert_eq!(
         returns,
@@ -37,7 +37,7 @@ fn conditional_destructure() {
         ]
     );
 
-    let returns = vm.function("f", &[Token::Bool(false), Token::Bool(false)], &[]);
+    let returns = vm.function("f", &[Token::Bool(false), Token::Bool(false)], &[], 0);
 
     assert_eq!(
         returns,
@@ -47,7 +47,7 @@ fn conditional_destructure() {
         ]
     );
 
-    let returns = vm.function("f", &[Token::Bool(false), Token::Bool(true)], &[]);
+    let returns = vm.function("f", &[Token::Bool(false), Token::Bool(true)], &[], 0);
 
     assert_eq!(
         returns,
@@ -56,4 +56,49 @@ fn conditional_destructure() {
             Token::Int(ethereum_types::U256::from(6)),
         ]
     );
+}
+
+#[test]
+fn casting_destructure() {
+    let mut vm = build_solidity(
+        r#"
+        contract foo {
+            int[] arr;
+            function f() public returns (int, int) {
+                int[] storage ptrArr = arr;
+                ptrArr.push(1);
+                ptrArr.push(2);
+                (int a, int b) = (ptrArr[0], ptrArr[1]);
+                return (a, b);
+            }
+        }"#,
+    );
+
+    vm.constructor("foo", &[], 0);
+
+    let returns = vm.function("f", &[], &[], 0);
+
+    assert_eq!(
+        returns,
+        vec![
+            Token::Int(ethereum_types::U256::from(1)),
+            Token::Int(ethereum_types::U256::from(2)),
+        ]
+    );
+
+    let mut vm = build_solidity(
+        r#"
+        contract foo {
+            function f() public returns (string) {
+                (string a, string b) = ("Hello", "World!");
+                return (a);
+            }
+        }"#,
+    );
+
+    vm.constructor("foo", &[], 0);
+
+    let returns = vm.function("f", &[], &[], 0);
+
+    assert_eq!(returns, vec![Token::String(String::from("Hello")),]);
 }

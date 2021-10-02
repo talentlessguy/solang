@@ -17,9 +17,9 @@ fn fixed_array() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -51,9 +51,9 @@ fn fixed_array() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -108,9 +108,9 @@ fn fixed_array() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -139,6 +139,7 @@ fn fixed_array() {
             Token::Bool(true),
         ])],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(26))]);
@@ -172,7 +173,7 @@ fn dynamic_array_fixed_elements() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
     let returns = vm.function(
         "get",
@@ -187,12 +188,13 @@ fn dynamic_array_fixed_elements() {
             Token::Uint(ethereum_types::U256::from(102)),
         ],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(26))]);
 
     // test that the abi encoder can handle fixed arrays
-    let returns = vm.function("set", &[], &[]);
+    let returns = vm.function("set", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -240,7 +242,7 @@ fn fixed_array_dynamic_elements() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
     let returns = vm.function(
         "get",
@@ -255,11 +257,12 @@ fn fixed_array_dynamic_elements() {
             Token::Uint(ethereum_types::U256::from(102)),
         ],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(127))]);
 
-    let returns = vm.function("set", &[], &[]);
+    let returns = vm.function("set", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -308,7 +311,7 @@ fn dynamic_array_dynamic_elements() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
     let returns = vm.function(
         "get",
@@ -323,11 +326,12 @@ fn dynamic_array_dynamic_elements() {
             Token::Uint(ethereum_types::U256::from(102)),
         ],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(127))]);
 
-    let returns = vm.function("set", &[], &[]);
+    let returns = vm.function("set", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -373,7 +377,7 @@ fn fixed_array_fixed_elements_storage() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
     vm.function(
         "set_elem",
@@ -382,6 +386,7 @@ fn fixed_array_fixed_elements_storage() {
             Token::Int(ethereum_types::U256::from(12123123)),
         ],
         &[],
+        0,
     );
 
     vm.function(
@@ -391,12 +396,14 @@ fn fixed_array_fixed_elements_storage() {
             Token::Int(ethereum_types::U256::from(123456789)),
         ],
         &[],
+        0,
     );
 
     let returns = vm.function(
         "get_elem",
         &[Token::Uint(ethereum_types::U256::from(2))],
         &[],
+        0,
     );
 
     assert_eq!(
@@ -404,7 +411,7 @@ fn fixed_array_fixed_elements_storage() {
         vec![Token::Int(ethereum_types::U256::from(12123123)),],
     );
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -425,9 +432,10 @@ fn fixed_array_fixed_elements_storage() {
             Token::Int(ethereum_types::U256::from(4)),
         ])],
         &[],
+        0,
     );
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -439,9 +447,9 @@ fn fixed_array_fixed_elements_storage() {
         ]),],
     );
 
-    vm.function("del", &[], &[]);
+    vm.function("del", &[], &[], 0);
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -483,7 +491,7 @@ fn fixed_array_dynamic_elements_storage() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
     vm.function(
         "set_elem",
@@ -492,6 +500,7 @@ fn fixed_array_dynamic_elements_storage() {
             Token::String(String::from("abcd")),
         ],
         &[],
+        0,
     );
 
     vm.function(
@@ -503,17 +512,19 @@ fn fixed_array_dynamic_elements_storage() {
             )),
         ],
         &[],
+        0,
     );
 
     let returns = vm.function(
         "get_elem",
         &[Token::Uint(ethereum_types::U256::from(2))],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::String(String::from("abcd"))]);
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -536,9 +547,10 @@ fn fixed_array_dynamic_elements_storage() {
             Token::String(String::from("d")),
         ])],
         &[],
+        0,
     );
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -550,9 +562,9 @@ fn fixed_array_dynamic_elements_storage() {
         ]),],
     );
 
-    vm.function("del", &[], &[]);
+    vm.function("del", &[], &[], 0);
 
-    let returns = vm.function("get", &[], &[]);
+    let returns = vm.function("get", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -606,26 +618,33 @@ fn storage_simple_dynamic_array() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    let returns = vm.function("len", &[], &[]);
+    let returns = vm.function("len", &[], &[], 0);
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(0))]);
 
-    vm.function("push", &[Token::Int(ethereum_types::U256::from(102))], &[]);
+    vm.function(
+        "push",
+        &[Token::Int(ethereum_types::U256::from(102))],
+        &[],
+        0,
+    );
 
-    vm.function("push_zero", &[], &[]);
+    vm.function("push_zero", &[], &[], 0);
 
     vm.function(
         "push",
         &[Token::Int(ethereum_types::U256::from(12345678901u64))],
         &[],
+        0,
     );
 
     let returns = vm.function(
         "subscript",
         &[Token::Uint(ethereum_types::U256::from(0))],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::Int(ethereum_types::U256::from(102))]);
@@ -634,6 +653,7 @@ fn storage_simple_dynamic_array() {
         "subscript",
         &[Token::Uint(ethereum_types::U256::from(1))],
         &[],
+        0,
     );
 
     assert_eq!(returns, vec![Token::Int(ethereum_types::U256::from(0))]);
@@ -642,6 +662,7 @@ fn storage_simple_dynamic_array() {
         "subscript",
         &[Token::Uint(ethereum_types::U256::from(2))],
         &[],
+        0,
     );
 
     assert_eq!(
@@ -649,7 +670,7 @@ fn storage_simple_dynamic_array() {
         vec![Token::Int(ethereum_types::U256::from(12345678901u64))]
     );
 
-    let returns = vm.function("copy", &[], &[]);
+    let returns = vm.function("copy", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -660,14 +681,14 @@ fn storage_simple_dynamic_array() {
         ])],
     );
 
-    let returns = vm.function("pop", &[], &[]);
+    let returns = vm.function("pop", &[], &[], 0);
 
     assert_eq!(
         returns,
         vec![Token::Int(ethereum_types::U256::from(12345678901u64))]
     );
 
-    let returns = vm.function("len", &[], &[]);
+    let returns = vm.function("len", &[], &[], 0);
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(2))]);
 
@@ -683,9 +704,10 @@ fn storage_simple_dynamic_array() {
             Token::Int(ethereum_types::U256::from(7)),
         ])],
         &[],
+        0,
     );
 
-    let returns = vm.function("copy", &[], &[]);
+    let returns = vm.function("copy", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -700,9 +722,9 @@ fn storage_simple_dynamic_array() {
         ])],
     );
 
-    vm.function("rm", &[], &[]);
+    vm.function("rm", &[], &[], 0);
 
-    let returns = vm.function("len", &[], &[]);
+    let returns = vm.function("len", &[], &[], 0);
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(0))]);
 }
@@ -721,9 +743,9 @@ fn storage_pop_running_on_empty() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    vm.function("pop", &[], &[]);
+    vm.function("pop", &[], &[], 0);
 }
 
 #[test]
@@ -778,9 +800,9 @@ fn storage_dynamic_array_of_structs() {
         }"#,
     );
 
-    vm.constructor("foo", &[]);
+    vm.constructor("foo", &[], 0);
 
-    let returns = vm.function("len", &[], &[]);
+    let returns = vm.function("len", &[], &[], 0);
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(0))]);
 
@@ -791,9 +813,10 @@ fn storage_dynamic_array_of_structs() {
             Token::Bool(true),
         ])],
         &[],
+        0,
     );
 
-    vm.function("push_empty", &[], &[]);
+    vm.function("push_empty", &[], &[], 0);
 
     vm.function(
         "push2",
@@ -802,12 +825,14 @@ fn storage_dynamic_array_of_structs() {
             Token::Bool(true),
         ])],
         &[],
+        0,
     );
 
     let returns = vm.function(
         "subscript",
         &[Token::Uint(ethereum_types::U256::from(0))],
         &[],
+        0,
     );
 
     assert_eq!(
@@ -822,6 +847,7 @@ fn storage_dynamic_array_of_structs() {
         "subscript",
         &[Token::Uint(ethereum_types::U256::from(1))],
         &[],
+        0,
     );
 
     assert_eq!(
@@ -836,6 +862,7 @@ fn storage_dynamic_array_of_structs() {
         "subscript",
         &[Token::Uint(ethereum_types::U256::from(2))],
         &[],
+        0,
     );
 
     assert_eq!(
@@ -846,7 +873,7 @@ fn storage_dynamic_array_of_structs() {
         ])]
     );
 
-    let returns = vm.function("copy", &[], &[]);
+    let returns = vm.function("copy", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -866,7 +893,7 @@ fn storage_dynamic_array_of_structs() {
         ])]
     );
 
-    let returns = vm.function("pop", &[], &[]);
+    let returns = vm.function("pop", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -876,7 +903,7 @@ fn storage_dynamic_array_of_structs() {
         ])]
     );
 
-    let returns = vm.function("len", &[], &[]);
+    let returns = vm.function("len", &[], &[], 0);
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(2))]);
 
@@ -909,9 +936,10 @@ fn storage_dynamic_array_of_structs() {
             ]),
         ])],
         &[],
+        0,
     );
 
-    let returns = vm.function("copy", &[], &[]);
+    let returns = vm.function("copy", &[], &[], 0);
 
     assert_eq!(
         returns,
@@ -943,9 +971,9 @@ fn storage_dynamic_array_of_structs() {
         ])]
     );
 
-    vm.function("rm", &[], &[]);
+    vm.function("rm", &[], &[], 0);
 
-    let returns = vm.function("len", &[], &[]);
+    let returns = vm.function("len", &[], &[], 0);
 
     assert_eq!(returns, vec![Token::Uint(ethereum_types::U256::from(0))]);
 }

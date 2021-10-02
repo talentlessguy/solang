@@ -511,7 +511,7 @@ impl SolanaTarget {
                 dispatch_function,
                 &contract.functions,
                 None,
-                |_| false,
+                |func| func.nonpayable,
             );
 
             let function_block = binary
@@ -648,6 +648,14 @@ impl SolanaTarget {
                     .into()],
                 "",
             );
+
+            // is there a not a payable constructor
+            if !contract.contract.functions.iter().any(|function_no| {
+                let f = &contract.ns.functions[*function_no];
+                f.is_constructor() && f.is_payable()
+            }) {
+                self.abort_if_value_transfer(binary, function, contract.ns);
+            }
 
             // There is only one possible constructor
             let ret = if let Some((constructor_function, params)) = contract.constructor {
@@ -2554,7 +2562,11 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
         ns: &ast::Namespace,
     ) {
         // abi encode the arguments. The
-        let mut tys = vec![ast::Type::Bytes(4), ast::Type::Bytes(1)];
+        let mut tys = vec![
+            ast::Type::Uint(64),
+            ast::Type::Bytes(4),
+            ast::Type::Bytes(1),
+        ];
 
         if let Some(function_no) = constructor_no {
             for param in &ns.functions[function_no].params {
@@ -2562,7 +2574,14 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
             }
         };
 
+        let value = if let Some(value) = value {
+            value
+        } else {
+            binary.context.i64_type().const_zero()
+        };
+
         let packed = [
+            value.into(),
             binary
                 .context
                 .i32_type()
@@ -2618,19 +2637,13 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
             "space",
         );
 
-        let value = if let Some(value) = value {
-            value
-        } else {
-            binary.context.i64_type().const_zero()
-        };
-
         let sol_params = function.get_last_param().unwrap().into_pointer_value();
 
         let create_contract = binary.module.get_function("create_contract").unwrap();
 
         let arg4 = binary.builder.build_pointer_cast(
             sol_params,
-            create_contract.get_type().get_param_types()[4].into_pointer_type(),
+            create_contract.get_type().get_param_types()[3].into_pointer_type(),
             "",
         );
 
@@ -2641,7 +2654,6 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
                 &[
                     payload.into(),
                     malloc_length.into(),
-                    value.into(),
                     space.into(),
                     arg4.into(),
                 ],
@@ -2924,8 +2936,19 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
     }
 
     /// Value received
-    fn value_transferred<'b>(&self, binary: &Binary<'b>, ns: &ast::Namespace) -> IntValue<'b> {
-        binary.value_type(ns).const_zero()
+    fn value_transferred<'b>(&self, binary: &Binary<'b>, _ns: &ast::Namespace) -> IntValue<'b> {
+        let parameters = self.sol_parameters(binary);
+
+        binary
+            .builder
+            .build_load(
+                binary
+                    .builder
+                    .build_struct_gep(parameters, 14, "value")
+                    .unwrap(),
+                "value",
+            )
+            .into_int_value()
     }
 
     /// Terminate execution, destroy binary and send remaining funds to addr
@@ -3044,20 +3067,51 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
             ast::Expression::Builtin(_, _, ast::Builtin::Timestamp, _) => {
                 let parameters = self.sol_parameters(binary);
 
-                let sol_timestamp = binary.module.get_function("sol_timestamp").unwrap();
+                let sol_clock = binary.module.get_function("sol_clock").unwrap();
 
                 let arg1 = binary.builder.build_pointer_cast(
                     parameters,
-                    sol_timestamp.get_type().get_param_types()[0].into_pointer_type(),
+                    sol_clock.get_type().get_param_types()[0].into_pointer_type(),
                     "",
                 );
 
-                binary
+                let clock = binary
                     .builder
-                    .build_call(sol_timestamp, &[arg1.into()], "timestamp")
+                    .build_call(sol_clock, &[arg1.into()], "clock")
                     .try_as_basic_value()
                     .left()
                     .unwrap()
+                    .into_pointer_value();
+
+                let timestamp = binary
+                    .builder
+                    .build_struct_gep(clock, 4, "unix_timestamp")
+                    .unwrap();
+
+                binary.builder.build_load(timestamp, "timestamp")
+            }
+            ast::Expression::Builtin(_, _, ast::Builtin::BlockNumber | ast::Builtin::Slot, _) => {
+                let parameters = self.sol_parameters(binary);
+
+                let sol_clock = binary.module.get_function("sol_clock").unwrap();
+
+                let arg1 = binary.builder.build_pointer_cast(
+                    parameters,
+                    sol_clock.get_type().get_param_types()[0].into_pointer_type(),
+                    "",
+                );
+
+                let clock = binary
+                    .builder
+                    .build_call(sol_clock, &[arg1.into()], "clock")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value();
+
+                let slot = binary.builder.build_struct_gep(clock, 0, "slot").unwrap();
+
+                binary.builder.build_load(slot, "timestamp")
             }
             ast::Expression::Builtin(_, _, ast::Builtin::Sender, _) => {
                 let parameters = self.sol_parameters(binary);
@@ -3105,6 +3159,9 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
                 );
 
                 binary.builder.build_load(value, "sender_address")
+            }
+            ast::Expression::Builtin(_, _, ast::Builtin::Value, _) => {
+                self.value_transferred(binary, ns).into()
             }
             ast::Expression::Builtin(_, _, ast::Builtin::GetAddress, _) => {
                 let parameters = self.sol_parameters(binary);
@@ -3165,6 +3222,7 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
 
                 let message = self.expression(binary, &args[1], vartab, function, ns);
                 let signature = self.expression(binary, &args[2], vartab, function, ns);
+                let parameters = self.sol_parameters(binary);
                 let signature_verify = binary.module.get_function("signature_verify").unwrap();
 
                 let arg1 = binary.builder.build_pointer_cast(
@@ -3194,6 +3252,7 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
                                 .into(),
                             arg1.into(),
                             arg2.into(),
+                            parameters.into(),
                         ],
                         "",
                     )

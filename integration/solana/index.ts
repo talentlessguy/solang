@@ -173,6 +173,7 @@ class Program {
         const data = Buffer.concat([
             this.contractStorageAccount.publicKey.toBuffer(),
             test.payerAccount.publicKey.toBuffer(),
+            Buffer.from('0000000000000000', 'hex'),
             Buffer.from(hash.substr(2, 8), 'hex'),
             this.encode_seeds(seeds),
             Buffer.from(input.replace('0x', ''), 'hex')
@@ -199,13 +200,14 @@ class Program {
         );
     }
 
-    async call_function(test: TestConnection, name: string, params: any[], pubkeys: PublicKey[] = [], seeds: any[] = [], signers: Keypair[] = []): Promise<{ [key: string]: any }> {
+    async call_function(test: TestConnection, name: string, params: any[], pubkeys: PublicKey[] = [], seeds: any[] = [], signers: Keypair[] = [], instr: TransactionInstruction[] = []): Promise<{ [key: string]: any }> {
         let abi: AbiItem = JSON.parse(this.abi).find((e: AbiItem) => e.name == name);
 
         const input: string = Web3EthAbi.encodeFunctionCall(abi, params);
         const data = Buffer.concat([
             this.contractStorageAccount.publicKey.toBuffer(),
             test.payerAccount.publicKey.toBuffer(),
+            Buffer.from('0000000000000000', 'hex'),
             Buffer.from('00000000', 'hex'),
             this.encode_seeds(seeds),
             Buffer.from(input.replace('0x', ''), 'hex')
@@ -236,9 +238,14 @@ class Program {
 
         signers.unshift(test.payerAccount);
 
+        let tx = new Transaction();
+
+        instr.forEach(i => tx.add(i));
+        tx.add(instruction);
+
         let signature = await sendAndConfirmTransaction(
             test.connection,
-            new Transaction().add(instruction),
+            tx,
             signers,
             {
                 skipPreflight: false,
@@ -291,6 +298,7 @@ class Program {
         const data = Buffer.concat([
             this.contractStorageAccount.publicKey.toBuffer(),
             test.payerAccount.publicKey.toBuffer(),
+            Buffer.from('0000000000000000', 'hex'),
             Buffer.from('00000000', 'hex'),
             this.encode_seeds(seeds),
             Buffer.from(input.replace('0x', ''), 'hex')
@@ -358,6 +366,7 @@ class Program {
         const data = Buffer.concat([
             this.contractStorageAccount.publicKey.toBuffer(),
             test.payerAccount.publicKey.toBuffer(),
+            Buffer.from('0000000000000000', 'hex'),
             Buffer.from('00000000', 'hex'),
             this.encode_seeds(seeds),
             Buffer.from(input.replace('0x', ''), 'hex')
