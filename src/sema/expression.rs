@@ -20,6 +20,7 @@ use super::ast::{
 use super::builtin;
 use super::contracts::{is_base, visit_bases};
 use super::eval::eval_const_number;
+use super::eval::eval_const_rational;
 use super::format::string_format;
 use super::symtable::Symtable;
 use crate::parser::pt;
@@ -28,6 +29,7 @@ use crate::sema::unused_variable::{
 };
 use crate::Target;
 use base58::{FromBase58, FromBase58Error};
+use num_rational::BigRational;
 
 impl Expression {
     /// Return the type for this expression. This assumes the expression has a single value,
@@ -50,6 +52,7 @@ impl Expression {
             | Expression::FunctionArg(_, ty, _)
             | Expression::BytesLiteral(_, ty, _)
             | Expression::NumberLiteral(_, ty, _)
+            | Expression::RationalNumberLiteral(_, ty, _)
             | Expression::StructLiteral(_, ty, _)
             | Expression::ArrayLiteral(_, ty, _, _)
             | Expression::ConstArrayLiteral(_, ty, _, _)
@@ -137,7 +140,7 @@ impl Expression {
         }
     }
 
-    /// Get the returns for a function call
+    /// Return the type for this expression.
     pub fn tys(&self) -> Vec<Type> {
         match self {
             Expression::Builtin(_, returns, _, _)
@@ -153,7 +156,7 @@ impl Expression {
                 }
             }
             Expression::FormatString(_, _) => vec![Type::String],
-            _ => unreachable!(),
+            _ => vec![self.ty()],
         }
     }
 }
@@ -296,7 +299,7 @@ fn coerce(
         return Ok(Type::Address(false));
     }
 
-    coerce_int(l, l_loc, r, r_loc, true, false, ns, diagnostics)
+    coerce_number(l, l_loc, r, r_loc, true, false, ns, diagnostics)
 }
 
 fn get_int_length(
@@ -344,7 +347,7 @@ fn get_int_length(
     }
 }
 
-fn coerce_int(
+fn coerce_number(
     l: &Type,
     l_loc: &pt::Loc,
     r: &Type,
@@ -374,6 +377,21 @@ fn coerce_int(
         }
         (Type::Bytes(left_length), Type::Bytes(right_length)) if allow_bytes => {
             return Ok(Type::Bytes(std::cmp::max(*left_length, *right_length)));
+        }
+        (Type::Rational, Type::Int(_)) => {
+            return Ok(Type::Rational);
+        }
+        (Type::Rational, Type::Rational) => {
+            return Ok(Type::Rational);
+        }
+        (Type::Rational, Type::Uint(_)) => {
+            return Ok(Type::Rational);
+        }
+        (Type::Uint(_), Type::Rational) => {
+            return Ok(Type::Rational);
+        }
+        (Type::Int(_), Type::Rational) => {
+            return Ok(Type::Rational);
         }
         _ => (),
     }
@@ -490,6 +508,33 @@ pub fn bigint_to_expression(
     }
 }
 
+/// Try to convert a Bigfloat into a Expression::RationalNumberLiteral. This checks for sign,
+/// width and creates to correct Type.
+pub fn bigdecimal_to_expression(
+    loc: &pt::Loc,
+    n: &BigRational,
+    ns: &Namespace,
+    diagnostics: &mut Vec<Diagnostic>,
+    resolve_to: Option<&Type>,
+) -> Result<Expression, ()> {
+    if let Some(resolve_to) = resolve_to {
+        if !resolve_to.is_rational() {
+            diagnostics.push(Diagnostic::error(
+                *loc,
+                format!("expected ‘{}’, found rational", resolve_to.to_string(ns)),
+            ));
+            return Err(());
+        } else {
+            return Ok(Expression::RationalNumberLiteral(
+                *loc,
+                resolve_to.clone(),
+                n.clone(),
+            ));
+        };
+    }
+    Err(())
+}
+
 /// Cast from one type to another, which also automatically derefs any Type::Ref() type.
 /// if the cast is explicit (e.g. bytes32(bar) then implicit should be set to false.
 pub fn cast(
@@ -553,7 +598,6 @@ pub fn cast(
                     let mut bs = n.to_signed_bytes_le();
 
                     bs.resize(to_len as usize / 8, 0xff);
-
                     Ok(Expression::NumberLiteral(
                         *loc,
                         Type::Uint(to_len),
@@ -595,12 +639,11 @@ pub fn cast(
                     Type::Int(to_len),
                     n.clone(),
                 ))
-            }
+            };
         }
         (&Expression::NumberLiteral(_, _, ref n), p, &Type::Bytes(to_len)) if p.is_primitive() => {
             // round up the number of bits to bytes
             let bytes = (n.bits() + 7) / 8;
-
             return if n.sign() == Sign::Minus {
                 diagnostics.push(Diagnostic::type_error(
                     *loc,
@@ -660,6 +703,13 @@ pub fn cast(
                     BigInt::from(init.len()),
                 )),
                 Some(init.clone()),
+            ));
+        }
+        (&Expression::NumberLiteral(_, _, ref n), _, &Type::Rational) => {
+            return Ok(Expression::RationalNumberLiteral(
+                *loc,
+                Type::Rational,
+                BigRational::from(n.clone()),
             ));
         }
         _ => (),
@@ -992,6 +1042,39 @@ fn cast_types(
                 ))
             }
         }
+        (Type::Rational, Type::Uint(_) | Type::Int(_) | Type::Value) => {
+            match eval_const_rational(&expr, None, ns) {
+                Ok((_, big_number)) => {
+                    if big_number.is_integer() {
+                        let expr = Expression::NumberLiteral(
+                            expr.loc(),
+                            to.clone(),
+                            big_number.to_integer(),
+                        );
+
+                        return cast(loc, expr, &to, true, ns, diagnostics);
+                    }
+
+                    diagnostics.push(Diagnostic::type_error(
+                        *loc,
+                        format!(
+                            "conversion to {} from {} not allowed",
+                            to.to_string(ns),
+                            from.to_string(ns)
+                        ),
+                    ));
+
+                    Err(())
+                }
+                Err(diag) => {
+                    diagnostics.push(diag);
+                    Err(())
+                }
+            }
+        }
+        (Type::Uint(_) | Type::Int(_) | Type::Value, Type::Rational) => {
+            Ok(Expression::Cast(*loc, to.clone(), Box::new(expr)))
+        }
         (Type::Bytes(_), Type::DynamicBytes) | (Type::DynamicBytes, Type::Bytes(_)) => Ok(
             Expression::BytesCast(*loc, from.clone(), to.clone(), Box::new(expr)),
         ),
@@ -1147,8 +1230,8 @@ fn cast_types(
             Ok(Expression::Cast(*loc, to.clone(), Box::new(expr)))
         }
         // string conversions
+        // (Type::Bytes(_), Type::String) => Ok(Expression::Cast(*loc, to.clone(), Box::new(expr))),
         /*
-        (Type::Bytes(_), Type::String) => Ok(Expression::Cast(*loc, to.clone(), Box::new(expr)),
         (Type::String, Type::Bytes(to_len)) => {
             if let Expression::BytesLiteral(_, from_str) = &expr {
                 if from_str.len() > to_len as usize {
@@ -1302,6 +1385,11 @@ pub fn expression(
         pt::Expression::NumberLiteral(loc, b) => {
             bigint_to_expression(loc, b, ns, diagnostics, resolve_to)
         }
+        pt::Expression::RationalNumberLiteral(loc, b) => Ok(Expression::RationalNumberLiteral(
+            *loc,
+            Type::Rational,
+            b.clone(),
+        )),
         pt::Expression::HexNumberLiteral(loc, n) => {
             hex_number_literal(loc, n, ns, diagnostics, resolve_to)
         }
@@ -1500,7 +1588,7 @@ pub fn expression(
             )?;
 
             check_var_usage_expression(ns, &left, &right, symtable);
-            let ty = coerce_int(
+            let ty = coerce_number(
                 &left.ty(),
                 &l.loc(),
                 &right.ty(),
@@ -1544,7 +1632,7 @@ pub fn expression(
             )?;
 
             check_var_usage_expression(ns, &left, &right, symtable);
-            let ty = coerce_int(
+            let ty = coerce_number(
                 &left.ty(),
                 &l.loc(),
                 &right.ty(),
@@ -1588,7 +1676,7 @@ pub fn expression(
             )?;
             check_var_usage_expression(ns, &left, &right, symtable);
 
-            let ty = coerce_int(
+            let ty = coerce_number(
                 &left.ty(),
                 &l.loc(),
                 &right.ty(),
@@ -1632,7 +1720,7 @@ pub fn expression(
             )?;
             check_var_usage_expression(ns, &left, &right, symtable);
 
-            let ty = coerce_int(
+            let ty = coerce_number(
                 &left.ty(),
                 &l.loc(),
                 &right.ty(),
@@ -1733,6 +1821,9 @@ pub fn expression(
 
                 bigint_to_expression(loc, &-n, ns, diagnostics, resolve_to)
             }
+            pt::Expression::RationalNumberLiteral(_, r) => {
+                bigdecimal_to_expression(loc, &-r, ns, diagnostics, resolve_to)
+            }
             e => {
                 let expr = expression(
                     e,
@@ -1752,6 +1843,8 @@ pub fn expression(
 
                 if let Expression::NumberLiteral(_, _, n) = expr {
                     bigint_to_expression(loc, &-n, ns, diagnostics, resolve_to)
+                } else if let Expression::RationalNumberLiteral(_, _, r) = expr {
+                    bigdecimal_to_expression(loc, &-r, ns, diagnostics, resolve_to)
                 } else {
                     get_int_length(&expr_type, loc, false, ns, diagnostics)?;
 
@@ -1823,6 +1916,8 @@ pub fn expression(
             let cond = cast(&c.loc(), cond, &Type::Bool, true, ns, diagnostics)?;
 
             let ty = coerce(&left.ty(), &l.loc(), &right.ty(), &r.loc(), ns, diagnostics)?;
+            let left = cast(&l.loc(), left, &ty, true, ns, diagnostics)?;
+            let right = cast(&r.loc(), right, &ty, true, ns, diagnostics)?;
 
             Ok(Expression::Ternary(
                 *loc,
@@ -1915,70 +2010,20 @@ pub fn expression(
                 diagnostics,
             )
         }
-        pt::Expression::NamedFunctionCall(loc, ty, args) => {
-            let mut nullsink = Vec::new();
-
-            // is it a struct literal
-            match ns.resolve_type(file_no, contract_no, true, ty, &mut nullsink) {
-                Ok(Type::Struct(n)) => {
-                    return named_struct_literal(
-                        loc,
-                        n,
-                        args,
-                        file_no,
-                        contract_no,
-                        function_no,
-                        ns,
-                        symtable,
-                        is_constant,
-                        unchecked,
-                        diagnostics,
-                    );
-                }
-                Ok(_) => {
-                    diagnostics.push(Diagnostic::error(
-                        *loc,
-                        "struct or function expected".to_string(),
-                    ));
-                    return Err(());
-                }
-                _ => {}
-            }
-
-            // not a struct literal, remove those errors and try resolving as function call
-            if is_constant {
-                diagnostics.push(Diagnostic::error(
-                    expr.loc(),
-                    "cannot call function in constant expression".to_string(),
-                ));
-                return Err(());
-            }
-
-            let expr = named_function_call_expr(
-                loc,
-                ty,
-                args,
-                file_no,
-                contract_no,
-                function_no,
-                unchecked,
-                ns,
-                symtable,
-                diagnostics,
-            )?;
-
-            check_function_call(ns, &expr, symtable);
-            if expr.tys().len() > 1 {
-                diagnostics.push(Diagnostic::error(
-                    *loc,
-                    "destucturing statement needed for function that returns multiple values"
-                        .to_string(),
-                ));
-                return Err(());
-            }
-
-            Ok(expr)
-        }
+        pt::Expression::NamedFunctionCall(loc, ty, args) => named_call_expr(
+            loc,
+            ty,
+            args,
+            false,
+            file_no,
+            contract_no,
+            function_no,
+            ns,
+            symtable,
+            is_constant,
+            unchecked,
+            diagnostics,
+        ),
         pt::Expression::New(loc, call) => {
             if is_constant {
                 diagnostics.push(Diagnostic::error(
@@ -2038,85 +2083,20 @@ pub fn expression(
             ));
             Err(())
         }
-        pt::Expression::FunctionCall(loc, ty, args) => {
-            let mut nullsink = Vec::new();
-
-            match ns.resolve_type(file_no, contract_no, true, ty, &mut nullsink) {
-                Ok(Type::Struct(n)) => {
-                    return struct_literal(
-                        loc,
-                        n,
-                        args,
-                        file_no,
-                        contract_no,
-                        function_no,
-                        ns,
-                        symtable,
-                        is_constant,
-                        unchecked,
-                        diagnostics,
-                    );
-                }
-                Ok(to) => {
-                    // Cast
-                    return if args.is_empty() {
-                        diagnostics.push(Diagnostic::error(
-                            *loc,
-                            "missing argument to cast".to_string(),
-                        ));
-                        Err(())
-                    } else if args.len() > 1 {
-                        diagnostics.push(Diagnostic::error(
-                            *loc,
-                            "too many arguments to cast".to_string(),
-                        ));
-                        Err(())
-                    } else {
-                        let expr = expression(
-                            &args[0],
-                            file_no,
-                            contract_no,
-                            function_no,
-                            ns,
-                            symtable,
-                            is_constant,
-                            unchecked,
-                            diagnostics,
-                            None,
-                        )?;
-
-                        cast(loc, expr, &to, false, ns, diagnostics)
-                    };
-                }
-                Err(_) => (),
-            }
-
-            let expr = function_call_expr(
-                loc,
-                ty,
-                args,
-                file_no,
-                contract_no,
-                function_no,
-                ns,
-                symtable,
-                is_constant,
-                unchecked,
-                diagnostics,
-            )?;
-
-            check_function_call(ns, &expr, symtable);
-            if expr.tys().len() > 1 {
-                diagnostics.push(Diagnostic::error(
-                    *loc,
-                    "destucturing statement needed for function that returns multiple values"
-                        .to_string(),
-                ));
-                return Err(());
-            }
-
-            Ok(expr)
-        }
+        pt::Expression::FunctionCall(loc, ty, args) => call_expr(
+            loc,
+            ty,
+            args,
+            false,
+            file_no,
+            contract_no,
+            function_no,
+            ns,
+            symtable,
+            is_constant,
+            unchecked,
+            diagnostics,
+        ),
         pt::Expression::ArraySubscript(loc, _, None) => {
             diagnostics.push(Diagnostic::error(
                 *loc,
@@ -2741,7 +2721,7 @@ fn subtract(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -2751,6 +2731,18 @@ fn subtract(
         ns,
         diagnostics,
     )?;
+
+    if ty.is_rational() {
+        let expr = Expression::Subtract(*loc, ty, false, Box::new(left), Box::new(right));
+
+        return match eval_const_rational(&expr, contract_no, ns) {
+            Ok(_) => Ok(expr),
+            Err(diag) => {
+                diagnostics.push(diag);
+                Err(())
+            }
+        };
+    }
 
     Ok(Expression::Subtract(
         *loc,
@@ -2802,7 +2794,7 @@ fn bitwise_or(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -2862,7 +2854,7 @@ fn bitwise_and(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -2922,7 +2914,7 @@ fn bitwise_xor(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -3093,7 +3085,7 @@ fn multiply(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -3103,6 +3095,18 @@ fn multiply(
         ns,
         diagnostics,
     )?;
+
+    if ty.is_rational() {
+        let expr = Expression::Multiply(*loc, ty, false, Box::new(left), Box::new(right));
+
+        return match eval_const_rational(&expr, contract_no, ns) {
+            Ok(_) => Ok(expr),
+            Err(diag) => {
+                diagnostics.push(diag);
+                Err(())
+            }
+        };
+    }
 
     // If we don't know what type the result is going to be, make any possible result fit.
     if resolve_to.is_none() {
@@ -3191,7 +3195,7 @@ fn divide(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -3251,7 +3255,7 @@ fn modulo(
 
     check_var_usage_expression(ns, &left, &right, symtable);
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left.ty(),
         &l.loc(),
         &right.ty(),
@@ -3356,7 +3360,7 @@ fn power(
         return Err(());
     }
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &base_type,
         &b.loc(),
         &exp_type,
@@ -4261,7 +4265,7 @@ fn addition(
         _ => {}
     }
 
-    let ty = coerce_int(
+    let ty = coerce_number(
         &left_type,
         &l.loc(),
         &right_type,
@@ -4900,14 +4904,28 @@ fn member_access(
         {
             return Ok(Expression::Builtin(*loc, vec![ty], builtin, vec![]));
         }
+
+        if builtin::builtin_namespace(&namespace.name) {
+            diagnostics.push(Diagnostic::error(
+                e.loc(),
+                format!("builtin ‘{}.{}’ does not exist", namespace.name, id.name),
+            ));
+
+            return Err(());
+        }
     }
 
-    // is an enum value
+    // is it an enum value
     if let Some(expr) = enum_value(loc, e, id, file_no, contract_no, ns, diagnostics)? {
         return Ok(expr);
     }
 
-    // is it an basecontract.function expression (unless basecontract is a local variable)
+    // is it a constant (unless basecontract is a local variable)
+    if let Some(expr) = contract_constant(e, id, file_no, ns, symtable, diagnostics, resolve_to)? {
+        return Ok(expr);
+    }
+
+    // is it a basecontract.function.selector expression (unless basecontract is a local variable)
     if let pt::Expression::Variable(namespace) = e {
         if symtable.find(&namespace.name).is_none() {
             if let Some(call_contract_no) = ns.resolve_contract(file_no, namespace) {
@@ -5243,6 +5261,71 @@ fn member_access(
     diagnostics.push(Diagnostic::error(*loc, format!("‘{}’ not found", id.name)));
 
     Err(())
+}
+
+fn contract_constant(
+    e: &pt::Expression,
+    id: &pt::Identifier,
+    file_no: usize,
+    ns: &mut Namespace,
+    symtable: &mut Symtable,
+    diagnostics: &mut Vec<Diagnostic>,
+    resolve_to: Option<&Type>,
+) -> Result<Option<Expression>, ()> {
+    let namespace = match e {
+        pt::Expression::Variable(namespace) => namespace,
+        _ => return Ok(None),
+    };
+
+    if symtable.find(&namespace.name).is_some() {
+        return Ok(None);
+    }
+
+    if let Some(contract_no) = ns.resolve_contract(file_no, namespace) {
+        if let Some((var_no, var)) = ns.contracts[contract_no]
+            .variables
+            .iter_mut()
+            .enumerate()
+            .find(|(_, variable)| variable.name == id.name)
+        {
+            if !var.constant {
+                let resolve_function = resolve_to
+                    .map(|ty| {
+                        matches!(
+                            ty,
+                            Type::InternalFunction { .. } | Type::ExternalFunction { .. }
+                        )
+                    })
+                    .unwrap_or(false);
+
+                if resolve_function {
+                    // requested function, fall through
+                    return Ok(None);
+                } else {
+                    diagnostics.push(Diagnostic::error(
+                        e.loc(),
+                        format!(
+                            "need instance of contract ‘{}’ to get variable value ‘{}’",
+                            ns.contracts[contract_no].name,
+                            ns.contracts[contract_no].variables[var_no].name,
+                        ),
+                    ));
+                    return Err(());
+                }
+            }
+
+            var.read = true;
+
+            return Ok(Some(Expression::ConstantVariable(
+                var.loc,
+                var.ty.clone(),
+                Some(contract_no),
+                var_no,
+            )));
+        }
+    }
+
+    Ok(None)
 }
 
 /// Resolve an array subscript expression
@@ -7808,6 +7891,176 @@ fn parse_call_args(
     }
 
     Ok(res)
+}
+
+pub fn named_call_expr(
+    loc: &pt::Loc,
+    ty: &pt::Expression,
+    args: &[pt::NamedArgument],
+    is_destructible: bool,
+    file_no: usize,
+    contract_no: Option<usize>,
+    function_no: Option<usize>,
+    ns: &mut Namespace,
+    symtable: &mut Symtable,
+    is_constant: bool,
+    unchecked: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Expression, ()> {
+    let mut nullsink = Vec::new();
+
+    // is it a struct literal
+    match ns.resolve_type(file_no, contract_no, true, ty, &mut nullsink) {
+        Ok(Type::Struct(n)) => {
+            return named_struct_literal(
+                loc,
+                n,
+                args,
+                file_no,
+                contract_no,
+                function_no,
+                ns,
+                symtable,
+                is_constant,
+                unchecked,
+                diagnostics,
+            );
+        }
+        Ok(_) => {
+            diagnostics.push(Diagnostic::error(
+                *loc,
+                "struct or function expected".to_string(),
+            ));
+            return Err(());
+        }
+        _ => {}
+    }
+
+    // not a struct literal, remove those errors and try resolving as function call
+    if is_constant {
+        diagnostics.push(Diagnostic::error(
+            *loc,
+            "cannot call function in constant expression".to_string(),
+        ));
+        return Err(());
+    }
+
+    let expr = named_function_call_expr(
+        loc,
+        ty,
+        args,
+        file_no,
+        contract_no,
+        function_no,
+        unchecked,
+        ns,
+        symtable,
+        diagnostics,
+    )?;
+
+    check_function_call(ns, &expr, symtable);
+    if expr.tys().len() > 1 && !is_destructible {
+        diagnostics.push(Diagnostic::error(
+            *loc,
+            "destucturing statement needed for function that returns multiple values".to_string(),
+        ));
+        return Err(());
+    }
+
+    Ok(expr)
+}
+
+/// Resolve any callable expression
+pub fn call_expr(
+    loc: &pt::Loc,
+    ty: &pt::Expression,
+    args: &[pt::Expression],
+    is_destructible: bool,
+    file_no: usize,
+    contract_no: Option<usize>,
+    function_no: Option<usize>,
+    ns: &mut Namespace,
+    symtable: &mut Symtable,
+    is_constant: bool,
+    unchecked: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Result<Expression, ()> {
+    let mut nullsink = Vec::new();
+
+    match ns.resolve_type(file_no, contract_no, true, ty, &mut nullsink) {
+        Ok(Type::Struct(n)) => {
+            return struct_literal(
+                loc,
+                n,
+                args,
+                file_no,
+                contract_no,
+                function_no,
+                ns,
+                symtable,
+                is_constant,
+                unchecked,
+                diagnostics,
+            );
+        }
+        Ok(to) => {
+            // Cast
+            return if args.is_empty() {
+                diagnostics.push(Diagnostic::error(
+                    *loc,
+                    "missing argument to cast".to_string(),
+                ));
+                Err(())
+            } else if args.len() > 1 {
+                diagnostics.push(Diagnostic::error(
+                    *loc,
+                    "too many arguments to cast".to_string(),
+                ));
+                Err(())
+            } else {
+                let expr = expression(
+                    &args[0],
+                    file_no,
+                    contract_no,
+                    function_no,
+                    ns,
+                    symtable,
+                    is_constant,
+                    unchecked,
+                    diagnostics,
+                    None,
+                )?;
+
+                cast(loc, expr, &to, false, ns, diagnostics)
+            };
+        }
+        Err(_) => (),
+    }
+
+    let expr = function_call_expr(
+        loc,
+        ty,
+        args,
+        file_no,
+        contract_no,
+        function_no,
+        ns,
+        symtable,
+        is_constant,
+        unchecked,
+        diagnostics,
+    )?;
+
+    check_function_call(ns, &expr, symtable);
+    if expr.tys().len() > 1 && !is_destructible {
+        diagnostics.push(Diagnostic::error(
+            *loc,
+            "destucturing statement needed for function that returns multiple values".to_string(),
+        ));
+        return Err(());
+    }
+
+    Ok(expr)
 }
 
 /// Resolve function call

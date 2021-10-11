@@ -2,7 +2,7 @@ use crate::build_solidity;
 use ethabi::Token;
 
 #[test]
-fn timestamp() {
+fn builtins() {
     let mut vm = build_solidity(
         r#"
         contract timestamp {
@@ -14,6 +14,12 @@ fn timestamp() {
             }
             function mr_blocknumber() public returns (uint64) {
                 return block.number;
+            }
+            function msg_data(uint32 x) public returns (bytes) {
+                return msg.data;
+            }
+            function sig() public returns (bytes4) {
+                return msg.sig;
             }
         }"#,
     );
@@ -39,5 +45,35 @@ fn timestamp() {
     assert_eq!(
         returns,
         vec![Token::Uint(ethereum_types::U256::from(70818331))]
+    );
+
+    let returns = vm.function(
+        "msg_data",
+        &[Token::Uint(ethereum_types::U256::from(0xdeadcafeu32))],
+        &[],
+        0,
+    );
+
+    if let Token::Bytes(v) = &returns[0] {
+        println!("{}", hex::encode(v));
+    }
+
+    assert_eq!(
+        returns,
+        vec![Token::Bytes(
+            hex::decode("84da38e000000000000000000000000000000000000000000000000000000000deadcafe")
+                .unwrap()
+        )]
+    );
+
+    let returns = vm.function("sig", &[], &[], 0);
+
+    if let Token::FixedBytes(v) = &returns[0] {
+        println!("{}", hex::encode(v));
+    }
+
+    assert_eq!(
+        returns,
+        vec![Token::FixedBytes(hex::decode("00a7029b").unwrap())]
     );
 }

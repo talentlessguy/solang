@@ -102,6 +102,8 @@ fn sema_file(file: &ResolvedFile, resolver: &mut FileResolver, ns: &mut ast::Nam
         }
     }
 
+    contracts::resolve_base_contracts(&contracts_to_resolve, file_no, ns);
+
     // once all the types are resolved, we can resolve the structs and events. This is because
     // struct fields or event fields can have types defined elsewhere.
     types::resolve_fields(fields, file_no, ns);
@@ -1542,7 +1544,7 @@ impl ast::Namespace {
             self,
         );
 
-        func.body = vec![ast::Statement::Return(pt::Loc(0, 0, 0), Vec::new())];
+        func.body = vec![ast::Statement::Return(pt::Loc(0, 0, 0), None)];
         func.has_body = true;
 
         func

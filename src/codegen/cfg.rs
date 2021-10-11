@@ -402,6 +402,9 @@ impl ControlFlowGraph {
             Expression::NumberLiteral(_, ty, n) => {
                 format!("{} {}", ty.to_string(ns), n.to_str_radix(10))
             }
+            Expression::RationalNumberLiteral(_, ty, n) => {
+                format!("{} {}", ty.to_string(ns), n)
+            }
             Expression::StructLiteral(_, _, expr) => format!(
                 "struct {{ {} }}",
                 expr.iter()
@@ -1563,7 +1566,7 @@ pub fn generate_modifier_dispatch(
     for stmt in &modifier.body {
         statement(
             stmt,
-            func,
+            modifier,
             &mut cfg,
             contract_no,
             ns,

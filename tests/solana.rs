@@ -507,9 +507,8 @@ impl<'a> SyscallObject<UserError> for SyscallSetReturnData<'a> {
         memory_mapping: &MemoryMapping,
         result: &mut Result<u64, EbpfError<UserError>>,
     ) {
-        if len > 1024 {
-            panic!("sol_set_return_data: length is {}", len);
-        }
+        assert!(len <= 1024, "sol_set_return_data: length is {}", len);
+
         let buf = question_mark!(translate_slice::<u8>(memory_mapping, addr, len), result);
 
         if let Ok(mut context) = self.context.try_borrow_mut() {
@@ -701,20 +700,6 @@ struct SolAccountMeta {
     pubkey_addr: u64,
     is_writable: bool,
     is_signer: bool,
-}
-
-/// Rust representation of C's SolAccountInfo
-#[derive(Debug)]
-struct SolAccountInfo {
-    key_addr: u64,
-    lamports_addr: u64,
-    data_len: u64,
-    data_addr: u64,
-    owner_addr: u64,
-    rent_epoch: u64,
-    is_signer: bool,
-    is_writable: bool,
-    executable: bool,
 }
 
 /// Rust representation of C's SolSignerSeed
@@ -1193,7 +1178,7 @@ impl VirtualMachine {
 
         vm.bind_syscall_context_object(
             Box::new(SyscallAllocFree {
-                allocator: Allocator::new(heap, ebpf::MM_HEAP_START),
+                allocator: Allocator::new(DEFAULT_HEAP_SIZE as u64, ebpf::MM_HEAP_START),
             }),
             None,
         )
@@ -1449,7 +1434,7 @@ impl VirtualMachine {
                     .collect();
                 let data = fields[1].clone();
 
-                RawLog { data, topics }
+                RawLog { topics, data }
             })
             .collect()
     }

@@ -25,8 +25,6 @@ pub struct FileResolver {
 pub struct ResolvedFile {
     /// Full path on the filesystem
     pub full_path: PathBuf,
-    /// Index into the file resolver
-    file_no: usize,
     /// Which import path was used, if any
     import_no: usize,
     // Base part relative to import
@@ -90,9 +88,9 @@ impl FileResolver {
     }
 
     /// Populate the cache with absolute file path
-    fn load_file(&mut self, path: &Path) -> Result<usize, String> {
-        if let Some(file_no) = self.cached_paths.get(path) {
-            return Ok(*file_no);
+    fn load_file(&mut self, path: &Path) -> Result<(), String> {
+        if self.cached_paths.get(path).is_some() {
+            return Ok(());
         }
 
         // read the file
@@ -122,7 +120,7 @@ impl FileResolver {
 
         self.cached_paths.insert(path.to_path_buf(), pos);
 
-        Ok(pos)
+        Ok(())
     }
 
     /// Walk the import path to search for a file. If no import path is set up,
@@ -145,7 +143,7 @@ impl FileResolver {
                     if first_part == mapping {
                         // match!
                         if let Ok(full_path) = join_fold(import_path, &relpath).canonicalize() {
-                            let file_no = self.load_file(&full_path)?;
+                            self.load_file(&full_path)?;
                             let base = full_path
                                 .parent()
                                 .expect("path should include filename")
@@ -153,9 +151,8 @@ impl FileResolver {
 
                             return Ok(ResolvedFile {
                                 full_path,
-                                base,
                                 import_no,
-                                file_no,
+                                base,
                             });
                         }
                     }
@@ -177,13 +174,10 @@ impl FileResolver {
                     .expect("path should include filename")
                     .to_path_buf();
 
-                let file_no = self.cached_paths[&full_path];
-
                 return Ok(ResolvedFile {
                     full_path,
                     base,
                     import_no: 0,
-                    file_no,
                 });
             }
 
@@ -191,7 +185,7 @@ impl FileResolver {
                 let import_path = join_fold(import_path, base);
 
                 if let Ok(full_path) = join_fold(&import_path, &path).canonicalize() {
-                    let file_no = self.load_file(&full_path)?;
+                    self.load_file(&full_path)?;
                     let base = full_path
                         .parent()
                         .expect("path should include filename")
@@ -201,7 +195,6 @@ impl FileResolver {
                         full_path,
                         base,
                         import_no: *import_no,
-                        file_no,
                     });
                 }
             }
@@ -216,13 +209,11 @@ impl FileResolver {
             let base = (&full_path.parent())
                 .expect("path should include filename")
                 .to_path_buf();
-            let file_no = self.cached_paths[&full_path];
 
             return Ok(ResolvedFile {
                 full_path,
                 base,
                 import_no: 0,
-                file_no,
             });
         }
 
@@ -236,11 +227,10 @@ impl FileResolver {
                         .parent()
                         .expect("path should include filename")
                         .to_path_buf();
-                    let file_no = self.load_file(&full_path)?;
+                    self.load_file(&full_path)?;
 
                     return Ok(ResolvedFile {
                         full_path,
-                        file_no,
                         import_no,
                         base,
                     });
@@ -257,19 +247,21 @@ impl FileResolver {
         file: &ast::File,
         loc: &Loc,
     ) -> (String, usize, usize, usize) {
-        let (beg_line_no, mut beg_offset) = file.offset_to_line_column(loc.1);
-        let (end_line_no, mut end_offset) = file.offset_to_line_column(loc.2);
+        let (begin_line, mut begin_column) = file.offset_to_line_column(loc.1);
+        let (end_line, mut end_column) = file.offset_to_line_column(loc.2);
+
         let mut full_line = self.files[file.cache_no]
             .lines()
-            .nth(beg_line_no)
+            .nth(begin_line)
             .unwrap()
             .to_owned();
+
         // If the loc spans across multiple lines, we concatenate them
-        if beg_line_no != end_line_no {
-            for i in beg_offset + 1..end_offset + 1 {
+        if begin_line != end_line {
+            for i in begin_line + 1..=end_line {
                 let line = self.files[file.cache_no].lines().nth(i).unwrap();
-                if i == end_offset {
-                    end_offset += full_line.len();
+                if i == end_line {
+                    end_column += full_line.len();
                 }
                 full_line.push_str(line);
             }
@@ -277,12 +269,14 @@ impl FileResolver {
 
         let old_size = full_line.len();
         full_line = full_line.trim_start().parse().unwrap();
-        // Calculate the size of the symbol we want to highlight
-        let size = end_offset - beg_offset;
-        // Update the offset after trimming the line
-        beg_offset -= old_size - full_line.len();
 
-        (full_line, beg_line_no, beg_offset, size)
+        // Calculate the size of the symbol we want to highlight
+        let size = end_column - begin_column;
+
+        // Update the offset after trimming the line
+        begin_column -= old_size - full_line.len();
+
+        (full_line, begin_line, begin_column, size)
     }
 }
 

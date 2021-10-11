@@ -3209,6 +3209,84 @@ impl<'a> TargetRuntime<'a> for SolanaTarget {
 
                 binary.builder.build_load(value, "self_address")
             }
+            ast::Expression::Builtin(_, _, ast::Builtin::Calldata, _) => {
+                let sol_params = self.sol_parameters(binary);
+
+                let input = binary
+                    .builder
+                    .build_load(
+                        binary
+                            .builder
+                            .build_struct_gep(sol_params, 5, "input")
+                            .unwrap(),
+                        "data",
+                    )
+                    .into_pointer_value();
+
+                let input_len = binary
+                    .builder
+                    .build_load(
+                        binary
+                            .builder
+                            .build_struct_gep(sol_params, 6, "input_len")
+                            .unwrap(),
+                        "data_len",
+                    )
+                    .into_int_value();
+
+                let input_len = binary.builder.build_int_truncate(
+                    input_len,
+                    binary.context.i32_type(),
+                    "input_len",
+                );
+
+                binary
+                    .builder
+                    .build_call(
+                        binary.module.get_function("vector_new").unwrap(),
+                        &[
+                            input_len.into(),
+                            binary.context.i32_type().const_int(1, false).into(),
+                            input.into(),
+                        ],
+                        "",
+                    )
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
+            ast::Expression::Builtin(_, _, ast::Builtin::Signature, _) => {
+                let sol_params = self.sol_parameters(binary);
+
+                let input = binary
+                    .builder
+                    .build_load(
+                        binary
+                            .builder
+                            .build_struct_gep(sol_params, 5, "input")
+                            .unwrap(),
+                        "data",
+                    )
+                    .into_pointer_value();
+
+                let selector = binary.builder.build_load(
+                    binary.builder.build_pointer_cast(
+                        input,
+                        binary.context.i32_type().ptr_type(AddressSpace::Generic),
+                        "selector",
+                    ),
+                    "selector",
+                );
+
+                let bswap = binary.llvm_bswap(32);
+
+                binary
+                    .builder
+                    .build_call(bswap, &[selector], "")
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+            }
             ast::Expression::Builtin(_, _, ast::Builtin::SignatureVerify, args) => {
                 assert_eq!(args.len(), 3);
 
